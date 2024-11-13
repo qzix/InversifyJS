@@ -405,10 +405,22 @@ class Container implements interfaces.Container {
     return resolved;
   }
 
-  private _preDestroy<T>(constructor: NewableFunction, instance: T): Promise<void> | void {
-    if (Reflect.hasMetadata(METADATA_KEY.PRE_DESTROY, constructor)) {
-      const data: interfaces.Metadata = Reflect.getMetadata(METADATA_KEY.PRE_DESTROY, constructor);
-      return (instance as interfaces.Instance<T>)[(data.value as string)]?.();
+  private _preDestroy(
+    constructor: NewableFunction | undefined,
+    instance: unknown,
+  ): Promise<void> | void {
+    if (
+      constructor !== undefined &&
+      Reflect.hasMetadata(METADATA_KEY.PRE_DESTROY, constructor)
+    ) {
+      const data: interfaces.Metadata = Reflect.getMetadata(
+        METADATA_KEY.PRE_DESTROY,
+        constructor,
+      ) as interfaces.Metadata;
+
+      return (instance as interfaces.Instance<unknown>)[
+        data.value as string
+      ]?.();
     }
   }
   private _removeModuleHandlers(moduleId: number): void {
@@ -422,8 +434,16 @@ class Container implements interfaces.Container {
     return this._bindingDictionary.removeByCondition(binding => binding.moduleId === moduleId);
   }
 
-  private _deactivate<T>(binding: Binding<T>, instance: T): void | Promise<void> {
-    const constructor: NewableFunction = Object.getPrototypeOf(instance).constructor;
+  private _deactivate<T>(
+    binding: Binding<T>,
+    instance: T,
+  ): void | Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const constructor: NewableFunction | undefined =
+      instance == undefined
+        ? undefined
+        : // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          Object.getPrototypeOf(instance).constructor;
 
     try {
       if (this._deactivations.hasKey(binding.serviceIdentifier)) {
@@ -434,9 +454,14 @@ class Container implements interfaces.Container {
 
         if (isPromise(result)) {
           return this._handleDeactivationError(
-            result.then(() => this._propagateContainerDeactivationThenBindingAndPreDestroyAsync(
-              binding, instance, constructor)),
-            constructor
+            result.then(async () =>
+              this._propagateContainerDeactivationThenBindingAndPreDestroyAsync(
+                binding,
+                instance,
+                constructor,
+              ),
+            ),
+            binding.serviceIdentifier,
           );
         }
       }
@@ -445,21 +470,37 @@ class Container implements interfaces.Container {
         binding, instance, constructor);
 
       if (isPromise(propagateDeactivationResult)) {
-        return this._handleDeactivationError(propagateDeactivationResult, constructor);
+        return this._handleDeactivationError(
+          propagateDeactivationResult,
+          binding.serviceIdentifier,
+        );
       }
     } catch (ex) {
       if (ex instanceof Error) {
-        throw new Error(ERROR_MSGS.ON_DEACTIVATION_ERROR(constructor.name, ex.message));
+        throw new Error(
+          ERROR_MSGS.ON_DEACTIVATION_ERROR(
+            getServiceIdentifierAsString(binding.serviceIdentifier),
+            ex.message,
+          ),
+        );
       }
     }
   }
 
-  private async _handleDeactivationError(asyncResult: Promise<void>, constructor: NewableFunction): Promise<void> {
+  private async _handleDeactivationError(
+    asyncResult: Promise<void>,
+    serviceIdentifier: interfaces.ServiceIdentifier,
+  ): Promise<void> {
     try {
       await asyncResult;
     } catch (ex) {
       if (ex instanceof Error) {
-        throw new Error(ERROR_MSGS.ON_DEACTIVATION_ERROR(constructor.name, ex.message));
+        throw new Error(
+          ERROR_MSGS.ON_DEACTIVATION_ERROR(
+            getServiceIdentifierAsString(serviceIdentifier),
+            ex.message,
+          ),
+        );
       }
     }
   }
@@ -677,7 +718,7 @@ class Container implements interfaces.Container {
   private _propagateContainerDeactivationThenBindingAndPreDestroy<T>(
     binding: Binding<T>,
     instance: T,
-    constructor: NewableFunction
+    constructor: NewableFunction | undefined,
   ): void | Promise<void> {
     if (this.parent) {
       return this._deactivate.bind(this.parent)(binding, instance);
@@ -689,7 +730,7 @@ class Container implements interfaces.Container {
   private async _propagateContainerDeactivationThenBindingAndPreDestroyAsync<T>(
     binding: Binding<T>,
     instance: T,
-    constructor: NewableFunction
+    constructor: NewableFunction | undefined,
   ): Promise<void> {
     if (this.parent) {
       await this._deactivate.bind(this.parent)(binding, instance);
@@ -709,7 +750,7 @@ class Container implements interfaces.Container {
   private _bindingDeactivationAndPreDestroy<T>(
     binding: Binding<T>,
     instance: T,
-    constructor: NewableFunction
+    constructor: NewableFunction | undefined,
   ): void | Promise<void> {
     if (typeof binding.onDeactivation === 'function') {
       const result = binding.onDeactivation(instance);
@@ -725,7 +766,7 @@ class Container implements interfaces.Container {
   private async _bindingDeactivationAndPreDestroyAsync<T>(
     binding: Binding<T>,
     instance: T,
-    constructor: NewableFunction
+    constructor: NewableFunction | undefined,
   ): Promise<void> {
     if (typeof binding.onDeactivation === 'function') {
       await binding.onDeactivation(instance);
